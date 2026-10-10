@@ -1,0 +1,15 @@
+# Rust
+target/
+
+# Bun / web
+node_modules/
+web/dist/
+
+# Local config and data
+.env
+*.log
+.DS_Store
+
+# launch script state (pids, logs)
+.run/
+deploy/.env.prod

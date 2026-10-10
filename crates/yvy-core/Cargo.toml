@@ -1,0 +1,13 @@
+[package]
+name = "yvy-core"
+description = "Pure chess logic for You v You: position keys, PGN replay, move sampling, game state"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+shakmaty.workspace = true
+pgn-reader.workspace = true
+rand.workspace = true
+serde.workspace = true
+thiserror.workspace = true

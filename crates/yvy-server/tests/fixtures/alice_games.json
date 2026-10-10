@@ -1,0 +1,71 @@
+{
+  "games": [
+    {
+      "url": "https://www.chess.com/game/live/1",
+      "pgn": "[Event \"Live Chess\"]\n[Site \"Chess.com\"]\n[White \"Alice\"]\n[Black \"bob\"]\n[Result \"1-0\"]\n\n1. e4 {[%clk 0:02:59]} 1... e5 {[%clk 0:02:58]} 2. Nf3 {[%clk 0:02:57]} 2... Nc6 {[%clk 0:02:56]} 3. Bb5 {[%clk 0:02:55]} 1-0\n",
+      "time_class": "blitz",
+      "time_control": "180",
+      "rules": "chess",
+      "rated": true,
+      "end_time": 1700000000,
+      "eco": "https://www.chess.com/openings/Ruy-Lopez",
+      "white": { "username": "Alice", "rating": 1500, "result": "win" },
+      "black": { "username": "bob", "rating": 1480, "result": "resigned" }
+    },
+    {
+      "url": "https://www.chess.com/game/live/2",
+      "pgn": "[Event \"Live Chess\"]\n[White \"alice\"]\n[Black \"carol\"]\n[Result \"1/2-1/2\"]\n\n1. e4 c5 2. Nf3 d6 1/2-1/2\n",
+      "time_class": "rapid",
+      "time_control": "600",
+      "rules": "chess",
+      "rated": true,
+      "end_time": 1700100000,
+      "white": { "username": "alice", "rating": 1550, "result": "agreed" },
+      "black": { "username": "carol", "rating": 1560, "result": "agreed" }
+    },
+    {
+      "url": "https://www.chess.com/game/live/3",
+      "pgn": "[Event \"Live Chess\"]\n[White \"ALICE\"]\n[Black \"dave\"]\n[Result \"0-1\"]\n\n1. d4 d5 2. c4 e6 0-1\n",
+      "time_class": "blitz",
+      "time_control": "180",
+      "rules": "chess",
+      "rated": false,
+      "end_time": 1700200000,
+      "white": { "username": "ALICE", "rating": 1490, "result": "resigned" },
+      "black": { "username": "dave", "rating": 1600, "result": "win" }
+    },
+    {
+      "url": "https://www.chess.com/game/live/4",
+      "pgn": "[Event \"Live Chess\"]\n[White \"erin\"]\n[Black \"alice\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 1-0\n",
+      "time_class": "blitz",
+      "time_control": "180",
+      "rules": "chess",
+      "rated": true,
+      "end_time": 1700300000,
+      "white": { "username": "erin", "rating": 1510, "result": "win" },
+      "black": { "username": "alice", "rating": 1500, "result": "timeout" }
+    },
+    {
+      "url": "https://www.chess.com/game/live/5",
+      "pgn": "[Event \"Live Chess\"]\n[Variant \"Chess960\"]\n[White \"alice\"]\n[Black \"frank\"]\n\n1. e4 e5 *\n",
+      "time_class": "blitz",
+      "time_control": "180",
+      "rules": "chess960",
+      "rated": true,
+      "end_time": 1700400000,
+      "white": { "username": "alice", "rating": 1500, "result": "win" },
+      "black": { "username": "frank", "rating": 1500, "result": "resigned" }
+    },
+    {
+      "url": "https://www.chess.com/game/live/6",
+      "pgn": "[Event \"Live Chess\"]\n[White \"alice\"]\n[Black \"grace\"]\n\n1. e5 *\n",
+      "time_class": "bullet",
+      "time_control": "60",
+      "rules": "chess",
+      "rated": true,
+      "end_time": 1700500000,
+      "white": { "username": "alice", "rating": 1500, "result": "abandoned" },
+      "black": { "username": "grace", "rating": 1500, "result": "win" }
+    }
+  ]
+}

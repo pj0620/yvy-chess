@@ -1,0 +1,5 @@
+# Caddy terminates TLS for the domain in $DOMAIN and forwards everything to the app.
+{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy app:8080
+}
