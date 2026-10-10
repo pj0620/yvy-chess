@@ -127,6 +127,11 @@ select.input { appearance: auto; }
 .session-row .outcome-win { color: var(--you); font-weight: 700; }
 .session-row .outcome-loss { color: var(--danger); font-weight: 700; }
 .note { color: var(--stockfish); font-size: 13px; }
+.backup { display: grid; gap: 12px; }
+.backup h2 { font-size: 17px; }
+label.btn { cursor: pointer; }
+.footer { color: var(--muted); font-size: 12px; text-align: center; padding: 18px 16px 28px; }
+.footer a { color: var(--muted); }
 .check { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; cursor: pointer; }
 .check input { margin-top: 4px; }
 .segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; width: fit-content; }

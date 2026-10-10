@@ -4,53 +4,30 @@ on:
   pull_request:
 
 jobs:
-  rust:
+  test:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_USER: yvy
-          POSTGRES_PASSWORD: yvy
-          POSTGRES_DB: yvy
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U yvy -d yvy"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-    env:
-      DATABASE_URL: postgres://yvy:yvy@localhost:5432/yvy
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
+          targets: wasm32-unknown-unknown
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
-
-  web:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
-      - run: bun run typecheck
-      - run: bun test
-      - run: bun run build
-
-  image:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+      - uses: taiki-e/install-action@v2
         with:
-          context: .
-          push: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tool: wasm-bindgen@0.2.129
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Rust lint and tests
+        run: |
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo clippy -p yvy-wasm --target wasm32-unknown-unknown -- -D warnings
+          cargo test --workspace
+
+      - name: Web build, typecheck and tests (including the real wasm module)
+        working-directory: web
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+          bun run typecheck
+          bun test

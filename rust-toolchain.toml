@@ -1,2 +1,4 @@
 [toolchain]
 channel = "stable"
+# The app's backend is compiled to WebAssembly for the browser.
+targets = ["wasm32-unknown-unknown"]

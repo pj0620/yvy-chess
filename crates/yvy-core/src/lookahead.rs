@@ -1,14 +1,14 @@
 use shakmaty::{san::SanPlus, CastlingMode, Chess, Position};
 
-use crate::key::position_key;
+use crate::codec::position_hash;
 
 /// A legal move together with the position it leads to.
 #[derive(Debug, Clone)]
 pub struct Successor {
     pub uci: String,
     pub san: String,
-    /// Key of the position after the move, see [`position_key`].
-    pub key: String,
+    /// Hash of the position after the move, see [`position_hash`].
+    pub key: u64,
     pub pos: Chess,
 }
 
@@ -22,9 +22,22 @@ pub fn successors(pos: &Chess) -> Vec<Successor> {
             Successor {
                 uci: m.to_uci(CastlingMode::Standard).to_string(),
                 san,
-                key: position_key(&next),
+                key: position_hash(&next),
                 pos: next,
             }
+        })
+        .collect()
+}
+
+/// Hashes of every position reachable in one legal move, without computing SAN. This is the
+/// hot loop of steering, which looks two plies ahead.
+pub fn successor_hashes(pos: &Chess) -> Vec<u64> {
+    pos.legal_moves()
+        .iter()
+        .map(|m| {
+            let mut next = pos.clone();
+            next.play_unchecked(*m);
+            position_hash(&next)
         })
         .collect()
 }
@@ -39,7 +52,8 @@ mod tests {
         assert_eq!(s.len(), 20);
         let e4 = s.iter().find(|x| x.uci == "e2e4").unwrap();
         assert_eq!(e4.san, "e4");
-        assert_eq!(e4.key, "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq -");
+        assert_eq!(e4.key, crate::GameState::from_uci_moves(&["e2e4"]).unwrap().hash());
+        assert_eq!(successor_hashes(&Chess::default()), s.iter().map(|x| x.key).collect::<Vec<_>>());
         // Two plies deep: 20 replies to each of the 20 moves.
         let total: usize = s.iter().map(|x| successors(&x.pos).len()).sum();
         assert_eq!(total, 400);

@@ -1,0 +1,3 @@
+# In the browser, randomness (for sampling the player's moves) comes from crypto.getRandomValues.
+[target.wasm32-unknown-unknown]
+rustflags = ['--cfg', 'getrandom_backend="wasm_js"']

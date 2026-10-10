@@ -3,14 +3,25 @@
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["DOM", "DOM.Iterable", "ESNext"],
+    "lib": [
+      "DOM",
+      "DOM.Iterable",
+      "ESNext"
+    ],
     "jsx": "react-jsx",
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
-    "types": ["@types/bun"]
+    "types": [
+      "@types/bun"
+    ]
   },
-  "include": ["src", "dev.ts"]
+  "include": [
+    "src",
+    "dev.ts",
+    "build.ts",
+    "serve-dist.ts"
+  ]
 }

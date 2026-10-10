@@ -133,11 +133,18 @@ export function statusText(status: string, result: string | null, userColor: str
 }
 
 /** "Jun 2025" for a timestamp, or an empty string when unknown. */
-export function monthLabel(iso: string | null | undefined, locale?: string): string {
-  if (!iso) return "";
-  const d = new Date(iso);
+export function monthLabel(when: number | string | null | undefined, locale?: string): string {
+  if (when == null || when === "") return "";
+  const d = new Date(when);
   if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleDateString(locale, { month: "short", year: "numeric" });
+}
+
+/** "2026-10-10" for a timestamp in ms, or an empty string. */
+export function dayLabel(ms: number | null | undefined): string {
+  if (ms == null) return "";
+  const d = new Date(ms);
+  return Number.isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
 }
 
 /** Short outcome for a game list: "won", "lost", "draw" or "in progress". */

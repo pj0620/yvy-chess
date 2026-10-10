@@ -1,4 +1,7 @@
-// Typed client for the Rust API. Shapes mirror crates/yvy-server/src/{session,import,api}.rs.
+import * as backend from "./backend";
+
+// Types and calls for the backend. The backend is Rust compiled to WebAssembly and runs in the
+// page (src/backend); the shapes mirror crates/yvy-app/src/session.rs.
 
 export type Color = "white" | "black";
 export type Source = "player" | "history" | "engine";
@@ -17,7 +20,8 @@ export interface Candidate {
   san: string;
   count: number;
   game_ids: string[];
-  last_played?: string | null;
+  /** ms since the epoch (older games played here may carry an ISO string). */
+  last_played?: number | string | null;
 }
 
 export interface HistoryDetail {
@@ -89,8 +93,10 @@ export interface Coverage {
 
 export interface Filters {
   time_classes?: string[];
-  date_from?: string;
-  date_to?: string;
+  /** ms since the epoch */
+  date_from?: number;
+  /** ms since the epoch */
+  date_to?: number;
   rated?: boolean;
 }
 
@@ -115,44 +121,8 @@ export interface SessionState {
   legal_moves: string[];
   moves: MoveOut[];
   coverage: Coverage;
-  created_at: string;
-}
-
-export interface Progress {
-  username: string;
-  status: "running" | "done" | "failed";
-  phase: string;
-  archives_total: number;
-  archives_done: number;
-  games_seen: number;
-  games_new: number;
-  games_skipped: number;
-  positions_new: number;
-  errors: string[];
-  message: string | null;
-  started_at: string;
-  finished_at: string | null;
-}
-
-export interface GameCounts {
-  total: number;
-  white: number;
-  black: number;
-  positions: number;
-  by_time_class: Record<string, number>;
-  first_game: string | null;
-  last_game: string | null;
-}
-
-export interface PlayerSummary {
-  username: string;
-  imported: boolean;
-  player_id?: number | null;
-  joined?: string | null;
-  last_import_at?: string | null;
-  ratings?: Record<string, number>;
-  games?: GameCounts;
-  import?: Progress | null;
+  created_at: number;
+  updated_at: number;
 }
 
 export interface SessionSummary {
@@ -167,19 +137,8 @@ export interface SessionSummary {
   status: string;
   result: "win" | "loss" | "draw" | null;
   plies: number;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface EngineInfo {
-  available: boolean;
-  name?: string;
-  path?: string;
-  elo_min?: number;
-  elo_max?: number;
-  movetime_ms?: number;
-  error?: string;
-  hint?: string;
+  created_at: number;
+  updated_at: number;
 }
 
 export interface CreateSessionBody {
@@ -193,6 +152,9 @@ export interface CreateSessionBody {
   gap_mode?: GapMode;
 }
 
+export type { EngineStatus, GameCounts, PlayerSummary, Progress } from "./backend";
+
+/** Errors carry an HTTP-like status so pages can tell "not imported yet" (404) apart. */
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -201,60 +163,33 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(path, {
-    ...init,
-    headers: { "content-type": "application/json", ...(init.headers ?? {}) },
-  });
-  if (!res.ok) {
-    let message = `${res.status} ${res.statusText}`;
-    try {
-      const body = (await res.json()) as { error?: string };
-      if (body.error) message = body.error;
-    } catch {
-      // not JSON; keep the status text
-    }
-    throw new ApiError(res.status, message);
+async function call<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    if (e instanceof backend.NotFoundError) throw new ApiError(404, e.message);
+    if (e instanceof ApiError) throw e;
+    throw new ApiError(400, e instanceof Error ? e.message : String(e));
   }
-  return (await res.json()) as T;
 }
-
-const u = encodeURIComponent;
 
 export const api = {
-  player: (username: string) => request<PlayerSummary>(`/api/players/${u(username)}`),
+  player: (username: string) => call(() => backend.player(username)),
   startImport: (username: string, months?: number) =>
-    request<{ status: string; progress: Progress }>(
-      `/api/players/${u(username)}/import${months ? `?months=${months}` : ""}`,
-      { method: "POST" },
-    ),
-  importStatus: (username: string) => request<Progress>(`/api/players/${u(username)}/import`),
-  engine: () => request<EngineInfo>("/api/engine"),
-  sessions: (username: string, limit = 30) => request<SessionSummary[]>(`/api/players/${u(username)}/sessions?limit=${limit}`),
-  createSession: (body: CreateSessionBody) =>
-    request<SessionState>("/api/sessions", { method: "POST", body: JSON.stringify(body) }),
-  session: (id: string) => request<SessionState>(`/api/sessions/${u(id)}`),
-  move: (id: string, uci: string) =>
-    request<SessionState>(`/api/sessions/${u(id)}/moves`, { method: "POST", body: JSON.stringify({ uci }) }),
-  undo: (id: string) => request<SessionState>(`/api/sessions/${u(id)}/undo`, { method: "POST" }),
-  resign: (id: string) => request<SessionState>(`/api/sessions/${u(id)}/resign`, { method: "POST" }),
-  pgnUrl: (id: string) => `/api/sessions/${u(id)}/pgn`,
+    call(async () => ({ status: "started", progress: await backend.startImport(username, { months }) })),
+  engine: () => backend.engineStatus(),
+  sessions: (username: string) => call(() => backend.sessions<SessionSummary[]>(username)),
+  createSession: (body: CreateSessionBody) => call(() => backend.createSession<SessionState>(body as CreateSessionBody & Record<string, unknown>)),
+  session: (id: string) => call(() => backend.session<SessionState>(id)),
+  move: (id: string, uci: string) => call(() => backend.move<SessionState>(id, uci)),
+  undo: (id: string) => call(() => backend.undo<SessionState>(id)),
+  resign: (id: string) => call(() => backend.resign<SessionState>(id)),
+  pgn: (id: string) => call(() => backend.pgn(id)),
+  exportBackup: (username: string) => call(() => backend.exportBackup(username)),
+  importBackup: (text: string) => call(() => backend.importBackup(text)),
 };
 
-/** Subscribes to import progress. Returns a function that closes the stream. */
-export function subscribeImport(username: string, onProgress: (p: Progress) => void, onError?: () => void) {
-  const es = new EventSource(`/api/players/${u(username)}/import/events`);
-  es.onmessage = (e) => {
-    const p = JSON.parse(e.data) as Progress;
-    onProgress(p);
-    if (p.status !== "running") es.close();
-  };
-  es.onerror = () => {
-    es.close();
-    onError?.();
-  };
-  return () => es.close();
-}
+export const subscribeImport = backend.subscribeImport;
 
 /** Games played in this app are stored under this time class. */
 export const APP_TIME_CLASS = "yvy";
@@ -262,8 +197,20 @@ export const TIME_CLASS_LABELS: Record<string, string> = { [APP_TIME_CLASS]: "Yo
 export function timeClassLabel(c: string): string {
   return TIME_CLASS_LABELS[c] ?? c;
 }
-/** Candidate game ids are chess.com URLs or app sessions; map the latter to the game page. */
+/** Candidate game ids are chess.com URLs or games played here; map the latter to the game page. */
 export function gameLink(id: string): { href: string; external: boolean } {
   const prefix = "yvy:session:";
-  return id.startsWith(prefix) ? { href: `/g/${id.slice(prefix.length)}`, external: false } : { href: id, external: true };
+  return id.startsWith(prefix) ? { href: `#/g/${id.slice(prefix.length)}`, external: false } : { href: id, external: true };
+}
+
+/** Saves text as a file in the user's downloads. */
+export function download(filename: string, text: string, type = "text/plain") {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

@@ -23,6 +23,12 @@ export function App() {
           <Route path="*" element={<p className="muted">Nothing here. <Link to="/">Go home.</Link></p>} />
         </Routes>
       </main>
+      <footer className="footer">
+        Everything runs in your browser: the logic is Rust compiled to WebAssembly, and your games stay on this device. Engine:{" "}
+        <a href="https://github.com/official-stockfish/Stockfish" target="_blank" rel="noreferrer">Stockfish</a> via{" "}
+        <a href="https://github.com/nmrugg/stockfish.js" target="_blank" rel="noreferrer">stockfish.js</a> (GPLv3) ·{" "}
+        <a href="https://github.com/pj0620/yvy-chess" target="_blank" rel="noreferrer">source</a>
+      </footer>
     </div>
   );
 }

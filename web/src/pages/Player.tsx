@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ExternalLink, LoaderCircle, Play, RefreshCw } from "lucide-react";
-import { outcomeLabel } from "../lib/format";
-import { api, ApiError, subscribeImport, timeClassLabel, APP_TIME_CLASS, type Color, type GapMode, type Mode, type Progress } from "../api";
+import { AlertTriangle, Download, ExternalLink, LoaderCircle, Play, RefreshCw, Upload } from "lucide-react";
+import { dayLabel, outcomeLabel } from "../lib/format";
+import { api, ApiError, download, subscribeImport, timeClassLabel, APP_TIME_CLASS, type Color, type GapMode, type Mode, type Progress } from "../api";
 import { ImportProgress } from "../components/ImportProgress";
 import { defaultElo, GAP_MODES, STEER_LEVELS } from "../lib/format";
 
@@ -41,18 +41,32 @@ export function Player() {
     }
   }, [summary.error, startImport]);
 
-  // Follow a running import over SSE and refresh the summary when it ends.
+  // Follow a running import and refresh the summary when it ends.
   useEffect(() => {
     if (importStatus !== "running") return;
-    return subscribeImport(
-      username,
-      (p) => {
-        setLive(p);
-        if (p.status !== "running") qc.invalidateQueries({ queryKey: ["player", username] });
-      },
-      () => qc.invalidateQueries({ queryKey: ["player", username] }),
-    );
+    return subscribeImport(username, (p) => {
+      setLive(p);
+      if (p.status !== "running") {
+        qc.invalidateQueries({ queryKey: ["player", username] });
+        qc.invalidateQueries({ queryKey: ["sessions", username] });
+      }
+    });
   }, [username, importStatus, qc]);
+
+  const [backupNote, setBackupNote] = useState<string | null>(null);
+  const restore = useMutation({
+    mutationFn: async (file: File) => api.importBackup(await file.text()),
+    onSuccess: (r) => {
+      setBackupNote(`Restored ${r.added} game${r.added === 1 ? "" : "s"}.`);
+      qc.invalidateQueries({ queryKey: ["player", username] });
+      qc.invalidateQueries({ queryKey: ["sessions", username] });
+    },
+  });
+  const backup = async () => {
+    const b = await api.exportBackup(username);
+    download(`yvy-backup-${username}-${dayLabel(Date.now())}.json`, JSON.stringify(b, null, 1), "application/json");
+    setBackupNote(`Saved ${b.sessions.length} game${b.sessions.length === 1 ? "" : "s"} played here.`);
+  };
 
   const data = summary.data;
   const games = data?.games;
@@ -91,8 +105,8 @@ export function Player() {
         gap_mode: gapMode,
         filters: {
           time_classes: classes.length > 0 ? classes : undefined,
-          date_from: dateFrom ? new Date(dateFrom).toISOString() : undefined,
-          date_to: dateTo ? new Date(`${dateTo}T23:59:59`).toISOString() : undefined,
+          date_from: dateFrom ? new Date(`${dateFrom}T00:00:00`).getTime() : undefined,
+          date_to: dateTo ? new Date(`${dateTo}T23:59:59.999`).getTime() : undefined,
         },
       }),
     onSuccess: (s) => navigate(`/g/${s.id}`),
@@ -146,8 +160,8 @@ export function Player() {
         <div className="card warn">
           <AlertTriangle size={18} aria-hidden />
           <div>
-            <strong>Stockfish was not found</strong> ({engine.data.error}). Positions outside your history will get a random
-            legal move until it is installed. {engine.data.hint}.
+            <strong>Stockfish could not start in this browser</strong> ({engine.data.error}). Positions outside your history will
+            get a random legal move, or you can pick "Switch sides" below.
           </div>
         </div>
       )}
@@ -177,7 +191,7 @@ export function Player() {
                 ))}
               </dd>
               <small>
-                {games.first_game?.slice(0, 10)} → {games.last_game?.slice(0, 10)}
+                {dayLabel(games.first_game)} → {dayLabel(games.last_game)}
               </small>
             </div>
             <div className="card stat">
@@ -324,6 +338,38 @@ export function Player() {
               );
             })}
           </ul>
+        </div>
+      )}
+
+      {imported && (
+        <div className="card backup" style={{ marginTop: 12 }}>
+          <div>
+            <h2 style={{ margin: 0 }}>Your data lives in this browser</h2>
+            <p className="muted small" style={{ margin: "4px 0 0" }}>
+              Nothing is uploaded anywhere. Games imported from chess.com can always be fetched again, but games played here
+              exist only in this browser, so save a backup to move them to another device or keep them safe.
+            </p>
+          </div>
+          <div className="controls">
+            <button type="button" className="btn" onClick={backup}>
+              <Download size={14} aria-hidden /> Save backup
+            </button>
+            <label className="btn">
+              <Upload size={14} aria-hidden /> Restore backup
+              <input
+                type="file"
+                accept="application/json,.json"
+                hidden
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) restore.mutate(file);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+          </div>
+          {backupNote && <p className="small">{backupNote}</p>}
+          {restore.error && <p className="error">{(restore.error as Error).message}</p>}
         </div>
       )}
 

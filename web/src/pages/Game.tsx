@@ -19,12 +19,12 @@ import {
   RotateCcw,
   Swords,
 } from "lucide-react";
-import { api, timeClassLabel, type SessionState } from "../api";
+import { api, download, timeClassLabel, type SessionState } from "../api";
 import { CandidateBars } from "../components/CandidateBars";
 import { MoveList } from "../components/MoveList";
 import { ProvenanceBadge } from "../components/ProvenanceBadge";
 import { applyUci, fenToPosition, positionAtPly } from "../lib/board";
-import { isEngine, isHistory, statusText, steerLabel } from "../lib/format";
+import { dayLabel, isEngine, isHistory, statusText, steerLabel } from "../lib/format";
 
 const PROMOTIONS: { code: "q" | "r" | "b" | "n"; label: string; white: string; black: string }[] = [
   { code: "q", label: "Queen", white: "♕", black: "♛" },
@@ -219,8 +219,8 @@ export function Game() {
     s.gap_mode === "switch" ? "switch sides at gaps" : `steer ${steerLabel(s.steer_cp).toLowerCase()}`,
     s.remember ? "remembered" : "not remembered",
     s.filters.time_classes?.map(timeClassLabel).join(", "),
-    s.filters.date_from ? `from ${s.filters.date_from.slice(0, 10)}` : undefined,
-    s.filters.date_to ? `to ${s.filters.date_to.slice(0, 10)}` : undefined,
+    s.filters.date_from ? `from ${dayLabel(s.filters.date_from)}` : undefined,
+    s.filters.date_to ? `to ${dayLabel(s.filters.date_to)}` : undefined,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -395,9 +395,13 @@ export function Game() {
           <button type="button" className="btn" onClick={() => setFlipped((f) => !f)}>
             <Repeat size={14} aria-hidden /> Flip
           </button>
-          <a className="btn" href={api.pgnUrl(s.id)} download>
+          <button
+            type="button"
+            className="btn"
+            onClick={async () => download(`yvy-${s.id.slice(0, 8)}.pgn`, await api.pgn(s.id), "application/x-chess-pgn")}
+          >
             <Download size={14} aria-hidden /> PGN
-          </a>
+          </button>
           {!playing && (
             <button type="button" className="btn btn-primary" onClick={() => rematch.mutate(s)} disabled={rematch.isPending}>
               <Swords size={14} aria-hidden /> Rematch as {myColor === "white" ? "black" : "white"}

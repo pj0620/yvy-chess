@@ -105,6 +105,7 @@ test("monthLabel and outcomeLabel", () => {
   expect(monthLabel("2025-06-23T10:00:00Z", "en-US")).toBe("Jun 2025");
   expect(monthLabel(null)).toBe("");
   expect(monthLabel("garbage")).toBe("");
+  expect(monthLabel(Date.UTC(2025, 5, 23), "en-US")).toBe("Jun 2025");
   expect(outcomeLabel("playing", null)).toBe("in progress");
   expect(outcomeLabel("checkmate", "win")).toBe("won");
   expect(outcomeLabel("resigned", "loss")).toBe("resigned");

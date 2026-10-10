@@ -1,6 +1,6 @@
 use shakmaty::{san::SanPlus, uci::UciMove, CastlingMode, Chess, Color, Position};
 
-use crate::key::position_key;
+use crate::{codec::position_hash, key::position_key};
 
 /// A move that has been played in a live game.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -41,8 +41,8 @@ pub enum GameError {
 pub struct GameState {
     pos: Chess,
     moves: Vec<AppliedMove>,
-    /// Position keys of every position seen so far, starting with the initial one.
-    keys: Vec<String>,
+    /// Hashes of every position seen so far, starting with the initial one.
+    keys: Vec<u64>,
 }
 
 impl Default for GameState {
@@ -54,8 +54,16 @@ impl Default for GameState {
 impl GameState {
     pub fn new() -> Self {
         let pos = Chess::default();
-        let keys = vec![position_key(&pos)];
+        let keys = vec![position_hash(&pos)];
         GameState { pos, moves: Vec::new(), keys }
+    }
+
+    /// A position given as FEN, for lookups; such a game has no move history.
+    pub fn from_fen(fen: &str) -> Result<Self, String> {
+        let fen: shakmaty::fen::Fen = fen.trim().parse().map_err(|e| format!("invalid FEN: {e}"))?;
+        let pos: Chess = fen.into_position(CastlingMode::Standard).map_err(|e| format!("illegal position: {e}"))?;
+        let keys = vec![position_hash(&pos)];
+        Ok(GameState { pos, moves: Vec::new(), keys })
     }
 
     /// Rebuilds a game from UCI moves, validating each of them.
@@ -84,7 +92,7 @@ impl GameState {
             san,
         };
         self.moves.push(applied.clone());
-        self.keys.push(position_key(&self.pos));
+        self.keys.push(position_hash(&self.pos));
         Ok(applied)
     }
 
@@ -120,6 +128,17 @@ impl GameState {
     /// Key of the current position, see [`position_key`].
     pub fn key(&self) -> String {
         position_key(&self.pos)
+    }
+
+    /// Hash of the current position, see [`position_hash`].
+    pub fn hash(&self) -> u64 {
+        position_hash(&self.pos)
+    }
+
+    /// SAN of a legal UCI move in the current position, without playing it.
+    pub fn san_of(&self, uci: &str) -> Option<String> {
+        let m = uci.parse::<UciMove>().ok()?.to_move(&self.pos).ok()?;
+        Some(SanPlus::from_move(self.pos.clone(), m).to_string())
     }
 
     pub fn legal_moves_uci(&self) -> Vec<String> {

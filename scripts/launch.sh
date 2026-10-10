@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# You v You Chess: start, stop or inspect the local dev stack.
+# You v You Chess: start, stop or inspect the local dev server.
 #
-#   scripts/launch.sh [start] [--open]   Postgres (Docker) + Rust API + Bun dev server, detached
-#   scripts/launch.sh stop [--db]        stop the API and web servers (--db also stops Postgres)
-#   scripts/launch.sh restart [--open]   stop, then start (use after editing .env)
-#   scripts/launch.sh status             what is running and where
-#   scripts/launch.sh logs [api|web]     last lines of the server logs
+#   scripts/launch.sh [start] [--open]   build the Rust backend to WebAssembly, start the Bun dev server
+#   scripts/launch.sh stop               stop the dev server
+#   scripts/launch.sh restart [--open]   stop, rebuild, start (use after changing Rust code)
+#   scripts/launch.sh status             is it running, and where
+#   scripts/launch.sh logs               last lines of the dev server log
+#   scripts/launch.sh preview [--open]   production build served under /yvy-chess/, like GitHub Pages
 #
-# PIDs and logs live in .run/ (gitignored). Settings come from .env, see .env.example.
+# There is no API server or database: everything runs in the browser. PIDs and logs live in .run/.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -15,219 +16,124 @@ cd "$ROOT"
 RUN_DIR="$ROOT/.run"
 mkdir -p "$RUN_DIR"
 
-# Same precedence as the servers themselves: a variable already in the environment wins over .env.
-load_env() {
-  [ -f .env ] || return 0
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in ''|'#'*) continue ;; esac
-    key="${line%%=*}"
-    val="${line#*=}"
-    key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
-    val="${val#\"}"; val="${val%\"}"; val="${val#\'}"; val="${val%\'}"
-    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
-    if [ -z "${!key+x}" ]; then export "$key=$val"; fi
+if [ -f .env ]; then
+  while IFS='=' read -r key val; do
+    case "$key" in ''|'#'*) continue ;; esac
+    [ -z "${!key+x}" ] && export "$key=$val"
   done < .env
-}
-load_env
+fi
 
-BIND="${YVY_BIND:-127.0.0.1:8080}"
-API_HOST="${BIND%:*}"; [ "$API_HOST" = "0.0.0.0" ] && API_HOST="127.0.0.1"
-API_PORT="${BIND##*:}"
-API_URL="http://${API_HOST}:${API_PORT}"
 WEB_PORT="${PORT:-3000}"
 WEB_URL="http://localhost:${WEB_PORT}"
-DB_PORT="${YVY_DB_PORT:-5432}"
-STOCKFISH="${STOCKFISH_PATH:-stockfish}"
-API_BIN="$ROOT/target/debug/yvy-server"
-WEB_ENTRY="$ROOT/web/dev.ts"
+PREVIEW_PORT="${PREVIEW_PORT:-4173}"
+PREVIEW_URL="http://localhost:${PREVIEW_PORT}/yvy-chess/"
 
 say()  { printf '%s\n' "$*"; }
 ok()   { printf '  ok   %s\n' "$*"; }
 warn() { printf '  warn %s\n' "$*"; }
 die()  { printf '  FAIL %s\n' "$*" >&2; exit 1; }
 
-docker_up()    { docker info >/dev/null 2>&1; }
-healthy_api()  { curl -sf --max-time 2 "$API_URL/api/health" >/dev/null 2>&1; }
-healthy_web()  { curl -sf --max-time 2 "$WEB_URL/" >/dev/null 2>&1; }
+healthy() { curl -sf --max-time 2 "$1" >/dev/null 2>&1; }
 listener_pid() { lsof -nP -iTCP:"$1" -sTCP:LISTEN -t 2>/dev/null | head -n 1 || true; }
-
-# wait_for <seconds> <predicate-function>
-wait_for() {
-  local secs=$1 fn=$2 i=0
-  until "$fn"; do
-    i=$((i + 1))
-    [ "$i" -ge "$secs" ] && return 1
-    sleep 1
-  done
-}
+wait_for() { local secs=$1 url=$2 i=0; until healthy "$url"; do i=$((i + 1)); [ "$i" -ge "$secs" ] && return 1; sleep 1; done; }
+open_url() { if command -v open >/dev/null 2>&1; then open "$1"; elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$1"; fi; }
 
 ensure_tools() {
   local t
-  for t in docker cargo bun curl lsof; do
+  for t in cargo bun curl lsof; do
     command -v "$t" >/dev/null 2>&1 || die "$t is not installed (see README.md, Prerequisites)"
   done
-  [ -f .env ] || warn "no .env found; using defaults (copy .env.example to .env to change ports)"
+  command -v wasm-bindgen >/dev/null 2>&1 || die "wasm-bindgen is missing: cargo install wasm-bindgen-cli --version 0.2.129 --locked"
+  rustup target list --installed 2>/dev/null | grep -q wasm32-unknown-unknown || die "missing Rust target: rustup target add wasm32-unknown-unknown"
 }
 
-ensure_docker() {
-  if docker_up; then ok "Docker daemon running"; return; fi
-  if [ "$(uname -s)" = "Darwin" ] && [ -d /Applications/Docker.app ]; then
-    say "  ...  starting Docker Desktop"
-    open -a Docker
-    wait_for 120 docker_up || die "Docker Desktop did not start within 2 minutes. Start it by hand, then rerun."
-    ok "Docker daemon running"
-  else
-    die "the Docker daemon is not running. Start Docker, then rerun."
-  fi
-}
-
-start_db() {
-  if ! docker compose up -d db --wait >/dev/null 2>&1; then
-    die "Postgres did not start. Try: docker compose up -d db --wait  (port $DB_PORT taken? set YVY_DB_PORT in .env)"
-  fi
-  ok "Postgres ready on localhost:$DB_PORT"
-}
-
-start_api() {
-  if healthy_api; then ok "API already running at $API_URL"; return; fi
-  local pid; pid=$(listener_pid "$API_PORT")
-  if [ -n "$pid" ]; then
-    die "port $API_PORT is held by pid $pid ($(ps -o comm= -p "$pid" 2>/dev/null)), which is not a healthy yvy API. Change YVY_BIND in .env or stop that process."
-  fi
-  say "  ...  building the API (the first build takes a few minutes)"
-  cargo build -q -p yvy-server || die "cargo build failed; fix the errors above and rerun"
-  nohup "$API_BIN" serve > "$RUN_DIR/api.log" 2>&1 &
-  echo $! > "$RUN_DIR/api.pid"
-  wait_for 60 healthy_api || die "the API did not become healthy within 60s; see .run/api.log"
-  ok "API listening at $API_URL (pid $(cat "$RUN_DIR/api.pid"), log .run/api.log)"
+build_wasm() {
+  say "  ...  building the Rust backend for WebAssembly"
+  scripts/build-wasm.sh > "$RUN_DIR/wasm.log" 2>&1 || { tail -n 30 "$RUN_DIR/wasm.log"; die "the Rust build failed; see .run/wasm.log"; }
+  ok "$(tail -n 1 "$RUN_DIR/wasm.log")"
 }
 
 start_web() {
-  if healthy_web; then ok "web dev server already running at $WEB_URL"; return; fi
+  if healthy "$WEB_URL/yvy_bg.wasm"; then ok "dev server already running at $WEB_URL"; return; fi
   local pid; pid=$(listener_pid "$WEB_PORT")
-  if [ -n "$pid" ]; then
-    die "port $WEB_PORT is held by pid $pid ($(ps -o comm= -p "$pid" 2>/dev/null)). Set PORT in .env to use another port, or stop that process."
-  fi
+  [ -n "$pid" ] && die "port $WEB_PORT is held by pid $pid ($(ps -o comm= -p "$pid" 2>/dev/null)). Set PORT in .env or stop it."
   (cd web && bun install --silent) || die "bun install failed in web/"
   (
     cd web
-    PORT="$WEB_PORT" nohup bun --hot "$WEB_ENTRY" > "$RUN_DIR/web.log" 2>&1 &
+    PORT="$WEB_PORT" nohup bun --hot dev.ts > "$RUN_DIR/web.log" 2>&1 < /dev/null &
     echo $! > "$RUN_DIR/web.pid"
   )
-  wait_for 30 healthy_web || die "the web dev server did not come up within 30s; see .run/web.log"
-  ok "web dev server at $WEB_URL (pid $(cat "$RUN_DIR/web.pid"), log .run/web.log)"
-}
-
-check_engine() {
-  local info; info=$(curl -sf --max-time 5 "$API_URL/api/engine" 2>/dev/null || true)
-  if printf '%s' "$info" | grep -q '"available":true'; then
-    ok "engine: $(printf '%s' "$info" | sed -E 's/.*"name":"([^"]*)".*/\1/')"
-  else
-    warn "Stockfish not found (STOCKFISH_PATH=$STOCKFISH). Gaps in your history get random legal moves until you install it: brew install stockfish"
-  fi
-}
-
-open_url() {
-  if command -v open >/dev/null 2>&1; then open "$1"
-  elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$1"
-  fi
+  wait_for 30 "$WEB_URL/" || die "the dev server did not come up within 30s; see .run/web.log"
+  ok "dev server at $WEB_URL (pid $(cat "$RUN_DIR/web.pid"), log .run/web.log)"
 }
 
 cmd_start() {
-  local open_browser=0 a
-  for a in "$@"; do
-    case "$a" in
-      --open) open_browser=1 ;;
-      *) die "unknown option for start: $a" ;;
-    esac
-  done
-  say "You v You Chess: starting the dev stack in $ROOT"
+  local open_browser=0
+  for a in "$@"; do case "$a" in --open) open_browser=1 ;; *) die "unknown option: $a" ;; esac; done
+  say "You v You Chess: starting the dev server in $ROOT"
   ensure_tools
-  ensure_docker
-  start_db
-  start_api
+  build_wasm
   start_web
-  check_engine
   say ""
   say "  UI   $WEB_URL"
-  say "  API  $API_URL/api/health"
   say "  stop: scripts/launch.sh stop    status: scripts/launch.sh status"
-  if [ "$open_browser" = 1 ]; then open_url "$WEB_URL"; fi
+  [ "$open_browser" = 1 ] && open_url "$WEB_URL"
+  return 0
 }
 
-stop_one() {
+stop_pidfile() {
   local name=$1 f="$RUN_DIR/$1.pid" pid
-  if [ -f "$f" ]; then
-    pid=$(cat "$f")
-    if kill -0 "$pid" 2>/dev/null; then
-      kill "$pid" 2>/dev/null || true
-      ok "$name stopped (pid $pid)"
-    else
-      say "  $name was not running"
-    fi
-    rm -f "$f"
-  fi
+  [ -f "$f" ] || return 0
+  pid=$(cat "$f")
+  if kill -0 "$pid" 2>/dev/null; then kill "$pid" 2>/dev/null || true; ok "$name stopped (pid $pid)"; fi
+  rm -f "$f"
 }
 
 cmd_stop() {
-  local with_db=0 a
-  for a in "$@"; do
-    case "$a" in
-      --db) with_db=1 ;;
-      *) die "unknown option for stop: $a" ;;
-    esac
-  done
-  stop_one api
-  stop_one web
-  # Servers started outside this script (or whose pid file was lost) for this checkout only.
-  pkill -f "$API_BIN serve" 2>/dev/null && ok "stray API process stopped" || true
-  pkill -f "bun --hot $WEB_ENTRY" 2>/dev/null && ok "stray web process stopped" || true
-  if [ "$with_db" = 1 ]; then
-    docker compose stop db >/dev/null 2>&1 && ok "Postgres stopped" || warn "could not stop Postgres"
-  else
-    say "  Postgres left running (scripts/launch.sh stop --db stops it too)"
-  fi
+  stop_pidfile web
+  stop_pidfile preview
+  pkill -f "bun --hot dev.ts" 2>/dev/null && ok "stray dev server stopped" || true
+  pkill -f "bun serve-dist.ts" 2>/dev/null && ok "stray preview server stopped" || true
+  return 0
 }
 
 cmd_status() {
   say "You v You Chess status ($ROOT)"
-  if docker_up; then
-    local st; st=$(docker compose ps --format '{{.Status}}' db 2>/dev/null || true)
-    if [ -n "$st" ]; then ok "Postgres: $st (localhost:$DB_PORT)"; else warn "Postgres container is not running"; fi
-  else
-    warn "Docker daemon is not running"
-  fi
-  if healthy_api; then
-    ok "API: $API_URL  $(curl -s --max-time 2 "$API_URL/api/health")"
-    check_engine
-  else
-    warn "API not responding at $API_URL"
-  fi
-  if healthy_web; then ok "web: $WEB_URL"; else warn "web dev server not responding at $WEB_URL"; fi
+  if healthy "$WEB_URL/yvy_bg.wasm"; then ok "dev server: $WEB_URL"; else warn "dev server not responding at $WEB_URL"; fi
+  if healthy "$PREVIEW_URL"; then ok "preview: $PREVIEW_URL"; fi
+  [ -f web/src/wasm/yvy_bg.wasm ] && ok "wasm built $(date -r web/src/wasm/yvy_bg.wasm '+%Y-%m-%d %H:%M')" || warn "wasm not built yet"
 }
 
-cmd_logs() {
-  local which="${1:-}" f
-  case "$which" in
-    api|web) tail -n 50 "$RUN_DIR/$which.log" 2>/dev/null || say "(no $which log yet)" ;;
-    *)
-      for f in api web; do
-        say "== .run/$f.log =="
-        tail -n 25 "$RUN_DIR/$f.log" 2>/dev/null || say "(no log yet)"
-      done ;;
-  esac
+cmd_preview() {
+  local open_browser=0
+  for a in "$@"; do case "$a" in --open) open_browser=1 ;; *) die "unknown option: $a" ;; esac; done
+  ensure_tools
+  say "  ...  production build (wasm + static site)"
+  (cd web && bun install --silent && bun run build) > "$RUN_DIR/build.log" 2>&1 || { tail -n 30 "$RUN_DIR/build.log"; die "build failed; see .run/build.log"; }
+  ok "$(grep '^built web/dist' "$RUN_DIR/build.log" | tail -n 1)"
+  stop_pidfile preview
+  (
+    cd web
+    PORT="$PREVIEW_PORT" nohup bun serve-dist.ts > "$RUN_DIR/preview.log" 2>&1 < /dev/null &
+    echo $! > "$RUN_DIR/preview.pid"
+  )
+  wait_for 15 "$PREVIEW_URL" || die "the preview server did not start; see .run/preview.log"
+  ok "preview at $PREVIEW_URL (served under a subpath, like GitHub Pages)"
+  [ "$open_browser" = 1 ] && open_url "$PREVIEW_URL"
+  return 0
 }
 
-usage() { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; }
 
 cmd="${1:-start}"
-if [ $# -gt 0 ]; then shift; fi
+[ $# -gt 0 ] && shift
 case "$cmd" in
   start|up)      cmd_start "$@" ;;
-  stop|down)     cmd_stop "$@" ;;
+  stop|down)     cmd_stop ;;
   restart)       cmd_stop; cmd_start "$@" ;;
   status)        cmd_status ;;
-  logs)          cmd_logs "$@" ;;
+  logs)          tail -n 50 "$RUN_DIR/web.log" 2>/dev/null || say "(no log yet)" ;;
+  preview)       cmd_preview "$@" ;;
   -h|--help|help) usage ;;
   --*)           cmd_start "$cmd" "$@" ;;
   *)             usage; exit 2 ;;

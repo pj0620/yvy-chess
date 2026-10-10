@@ -1,13 +1,25 @@
 # You v You Chess: Build Plan
 
-## Status (2026-10-09)
+## Status (2026-10-10): now a static site, Rust in WebAssembly
 
-Milestones M0 to M4 are implemented and verified: import, index, play, UI, Docker image. See
-README.md for how to run it. Decisions made while building that differ from the text below:
-the `seed` column was dropped (sampling uses a fresh RNG; core tests inject a seeded one),
-`position_moves` stores the SAN as well, imports accept `--months N` to limit the archives
-fetched, a missing Stockfish falls back to a random legal move labelled `engine: "random"`,
-and `just` is replaced by a Makefile. Remaining polish ideas are listed in sections 11 and 12.
+The app no longer has a server or a database. The Rust logic moved into `crates/yvy-app` and
+runs in the browser as WebAssembly (`crates/yvy-wasm`); imports, games played here and the
+index live in the browser's IndexedDB; Stockfish 19 (lite, single-threaded WebAssembly build)
+runs in a Web Worker. The site deploys to GitHub Pages (`.github/workflows/pages.yml`).
+
+What changed relative to the plan below:
+- Postgres, axum, Docker Compose and the native Stockfish process are gone. Sections 3 to 9
+  describe that server architecture and are kept as history.
+- Positions and own-piece setups are keyed by 64-bit hashes instead of EPD strings, and moves are
+  packed into 16 bits, so a large history fits in browser memory. Imported decisions sit in a
+  sorted array searched by binary search; games played here sit in a small mutable overlay.
+- Each imported chess.com month is stored as one compact binary blob produced by Rust.
+- Engine work is a round trip: Rust returns an engine request (position, strength, steering
+  candidates), the page runs Stockfish, and Rust chooses the move from the result.
+- Games played here can be saved and restored as a backup file, since they exist only in the
+  browser.
+
+Everything in section 2 (the model, steering, switch mode, memory) carries over unchanged.
 
 ## 1. What we're building
 

@@ -1,0 +1,21 @@
+[package]
+name = "yvy-wasm"
+description = "WebAssembly bindings for You v You Chess: the whole backend, running in the browser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+yvy-app = { path = "../yvy-app" }
+serde.workspace = true
+serde_json.workspace = true
+# Must match the wasm-bindgen CLI version used by scripts/build-wasm.sh.
+wasm-bindgen = "=0.2.129"
+js-sys = "0.3"
+console_error_panic_hook = "0.1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }

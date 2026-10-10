@@ -3,19 +3,25 @@ use std::ops::ControlFlow;
 use pgn_reader::{RawTag, Reader, SanPlus, Visitor};
 use shakmaty::{fen::Fen, CastlingMode, Chess, Color, Position};
 
-use crate::key::{own_setup_key, position_key};
+use crate::codec::{encode_move, position_hash, setup_hash};
 
 /// One decision the player made in a game: the position they faced and what they played.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PlayerMove {
     /// 1-based ply within the game (1 is White's first move, 2 is Black's first move).
     pub ply: u32,
-    /// Key of the position *before* the move, see [`position_key`].
-    pub epd: String,
-    pub uci: String,
-    pub san: String,
-    /// Placement of the player's own pieces *after* the move, see [`own_setup_key`].
-    pub setup: String,
+    /// Hash of the position *before* the move, see [`position_hash`].
+    pub key: u64,
+    /// Hash of the player's own piece setup *after* the move, see [`setup_hash`].
+    pub setup: u64,
+    /// The move, see [`crate::encode_move`].
+    pub mv: u16,
+}
+
+impl PlayerMove {
+    pub fn uci(&self) -> String {
+        crate::decode_uci_string(self.mv)
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -93,27 +99,25 @@ impl Visitor for Extractor {
     }
 
     fn san(&mut self, mt: &mut Self::Movetext, san_plus: SanPlus) -> ControlFlow<Self::Output> {
-        let san_text = san_plus.to_string();
         let m = match san_plus.san.to_move(&mt.pos) {
             Ok(m) => m,
             Err(_) => {
                 return ControlFlow::Break(Err(PgnError::IllegalMove {
                     ply: mt.ply + 1,
-                    san: san_text,
+                    san: san_plus.to_string(),
                 }))
             }
         };
         let players_turn = mt.pos.turn() == self.player;
-        let epd = players_turn.then(|| position_key(&mt.pos));
+        let key = players_turn.then(|| position_hash(&mt.pos));
         mt.pos.play_unchecked(m);
         mt.ply += 1;
-        if let Some(epd) = epd {
+        if let Some(key) = key {
             mt.moves.push(PlayerMove {
                 ply: mt.ply,
-                epd,
-                uci: m.to_uci(CastlingMode::Standard).to_string(),
-                san: san_text,
-                setup: own_setup_key(&mt.pos, self.player),
+                key,
+                setup: setup_hash(&mt.pos, self.player),
+                mv: encode_move(m),
             });
         }
         ControlFlow::Continue(())
@@ -146,20 +150,22 @@ mod tests {
 
     #[test]
     fn extracts_only_the_players_moves() {
+        use crate::{own_setup_key, GameState};
         let white = extract_player_moves(SCHOLARS_MATE, Color::White).unwrap();
         assert_eq!(white.ply_count, 7);
-        let ucis: Vec<_> = white.moves.iter().map(|m| m.uci.as_str()).collect();
+        let ucis: Vec<_> = white.moves.iter().map(|m| m.uci()).collect();
         assert_eq!(ucis, ["e2e4", "f1c4", "d1h5", "h5f7"]);
         let plies: Vec<_> = white.moves.iter().map(|m| m.ply).collect();
         assert_eq!(plies, [1, 3, 5, 7]);
-        assert_eq!(white.moves[0].epd, "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -");
-        assert_eq!(white.moves[3].san, "Qxf7#");
-        assert_eq!(white.moves[0].setup, "8/8/8/8/4P3/8/PPPP1PPP/RNBQKBNR");
+        assert_eq!(white.moves[0].key, GameState::new().hash());
+        let after_e4 = GameState::from_uci_moves(&["e2e4"]).unwrap();
+        assert_eq!(white.moves[0].setup, crate::setup_hash(after_e4.position(), Color::White));
+        assert_eq!(own_setup_key(after_e4.position(), Color::White), "8/8/8/8/4P3/8/PPPP1PPP/RNBQKBNR");
 
         let black = extract_player_moves(SCHOLARS_MATE, Color::Black).unwrap();
-        let ucis: Vec<_> = black.moves.iter().map(|m| m.uci.as_str()).collect();
+        let ucis: Vec<_> = black.moves.iter().map(|m| m.uci()).collect();
         assert_eq!(ucis, ["e7e5", "b8c6", "g8f6"]);
-        assert_eq!(black.moves[0].epd, "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq -");
+        assert_eq!(black.moves[0].key, after_e4.hash());
     }
 
     #[test]

@@ -4,8 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "wasm": "bash ../scripts/build-wasm.sh",
     "dev": "bun --hot dev.ts",
-    "build": "bun build ./src/index.html --outdir dist --minify --target browser",
+    "build": "bun run wasm && bun build.ts",
+    "preview": "bun serve-dist.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },

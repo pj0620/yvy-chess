@@ -1,103 +1,49 @@
 # Deploying You v You Chess
 
-What runs: one container with the Rust server, the web bundle and Stockfish (about 200 MB), plus
-Postgres. A big account's history is a few hundred MB in Postgres. Stockfish thinks for
-300 ms per gap move, so any single shared vCPU is fine, and there is no GPU or other service.
-Plan on 1 GB of RAM for app plus database; 512 MB works with `YVY_ENGINE_MOVETIME_MS` lowered,
-but it is tight.
+The app is a static site, so hosting is free. `make build` (or `cd web && bun run build`)
+writes everything to `web/dist`, about 3.5 MB in all:
 
-**Before exposing it to the internet, set `YVY_PASSWORD`.** Every request except the health
-check then needs that password over HTTP Basic auth (the browser asks once). Without it anyone
-who finds the URL can trigger chess.com imports and play games that get written into your
-history. Behind Tailscale or on a home network the password is optional.
+- the page and its JavaScript;
+- `yvy_bg.wasm`, the Rust backend, about 1.3 MB;
+- `engine/`, Stockfish's single-threaded WebAssembly build, about 1.8 MB.
 
-## Options, cheapest first
+All paths are relative and routes use the URL hash (`#/p/name`), so the site works from any
+subpath and needs no server rewrites. The single-threaded engine needs no special headers.
 
-Prices checked in October 2026; they drift, so treat them as rough.
+## GitHub Pages (recommended)
 
-| Option | Cost per month | Good for | Watch out for |
-|---|---|---|---|
-| Your own Mac plus Tailscale | $0 | Just you, from your phone or laptop anywhere | Only works while the Mac is awake |
-| Oracle Cloud Always Free ARM VM | $0 | A real always-on server for free | Free allocation cut to 2 OCPU / 12 GB in June 2026; sign-up friction; idle VMs can be reclaimed |
-| Hetzner CX23 (2 vCPU, 4 GB) | about €4.50 (€3.99 plus €0.50 IPv4) | Best price for a real server | Cost-optimized plans were listed as unavailable in September 2026; CAX11 ARM at €4.49 is the fallback |
-| DigitalOcean Basic Droplet | $4 (512 MB) or $6 (1 GB) | Same idea, dollar billing | 512 MB is too small for app plus Postgres; take the $6 one |
-| Fly.io, machine plus Fly Postgres | about $2 to $8 | Scale to zero, no server to maintain | Idle machine stops, so the first request waits a few seconds; Fly Postgres is self-managed |
-| Railway | $5 floor plus usage, realistically $10 to $15 | Simplest dashboard | Metered RAM and CPU add up for an always-on Postgres |
+The repo has a workflow, `.github/workflows/pages.yml`, that builds and publishes on every push to `main`.
 
-Recommendation: if it is only for you, run it at home behind Tailscale for nothing. If you want
-it always on, a Hetzner or DigitalOcean box with the Compose file below is predictable at about
-$5 a month and runs Stockfish well. Pick Fly if you would rather not own a server and can live
-with a cold start.
+1. Enable Pages with GitHub Actions as the source, once. Either use the repository settings:
+   **Settings → Pages → Build and deployment → Source: GitHub Actions**. Or the CLI:
 
-## A. Your Mac plus Tailscale ($0)
+   ```sh
+   gh api -X POST repos/pj0620/yvy-chess/pages -f build_type=workflow
+   ```
 
-1. Install Tailscale on the Mac and on your phone or laptop.
-2. Start the full stack: `make up` (or `scripts/launch.sh` for the dev stack).
-3. `tailscale serve --bg 8080` gives you an HTTPS URL on your tailnet that proxies to the app.
-   Use `YVY_APP_PORT` from `.env` if you changed the port.
+2. Push to `main`, or run the workflow by hand from the Actions tab. The site appears at
+   `https://pj0620.github.io/yvy-chess/`.
 
-No password needed; only devices on your tailnet can reach it.
+To check a build locally exactly as Pages will serve it, run `make preview` and open
+http://localhost:4173/yvy-chess/.
 
-## B. A small VPS with Docker Compose (about $5)
+A custom domain works too: add it under Settings → Pages and point a CNAME record at
+`pj0620.github.io`.
 
-Works the same on Hetzner, DigitalOcean, Oracle's free ARM VM or anything with Docker.
+## Other static hosts
 
-```sh
-# on the server, as root, Ubuntu or Debian
-curl -fsSL https://get.docker.com | sh
-git clone <your repo url> yvy_chess && cd yvy_chess
-cp deploy/.env.prod.example deploy/.env.prod
-nano deploy/.env.prod            # DOMAIN, POSTGRES_PASSWORD, YVY_CONTACT, YVY_PASSWORD
-```
+Any static host works with the same `web/dist` folder: Cloudflare Pages, Netlify, Vercel, an S3
+bucket, or `python3 -m http.server` inside `web/dist`. The only requirement is that `.wasm` files
+are served as `application/wasm`, which every mainstream host already does.
 
-Point your domain's A record (and AAAA if you have IPv6) at the server, then:
+## Things to know
 
-```sh
-docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod up -d --build
-```
-
-Caddy obtains the certificate on first start, so open ports 80 and 443 in the provider's
-firewall. The first build compiles the Rust server in release mode, which takes several minutes
-on a 2 vCPU box; later builds reuse the cache. If the server is too small to build comfortably,
-build the image elsewhere and push it to a registry (GitHub Container Registry is free for
-public images), then replace the `build:` block in the Compose file with `image: ...`. On Apple
-Silicon build for the server's architecture: `docker build --platform linux/amd64 -t ghcr.io/you/yvy-chess .`.
-
-Day to day:
-
-- Update: `git pull && docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod up -d --build`
-- Logs: `docker compose -f deploy/docker-compose.prod.yml logs -f app`
-- Backup (weekly cron is plenty; the chess.com games can always be re-imported, your own games played here are the part worth keeping):
-  `docker compose -f deploy/docker-compose.prod.yml exec -T db pg_dump -U yvy yvy | gzip > yvy-$(date +%F).sql.gz`
-- Restore: `gunzip -c yvy-DATE.sql.gz | docker compose -f deploy/docker-compose.prod.yml exec -T db psql -U yvy yvy`
-
-## C. Fly.io (about $2 to $8)
-
-```sh
-fly launch --no-deploy --copy-config --config deploy/fly.toml   # pick an app name and region
-fly postgres create                                              # smallest development size
-fly postgres attach <pg-app> -a <app>                            # sets DATABASE_URL
-fly secrets set YVY_PASSWORD=... YVY_CONTACT=you@example.com -a <app>
-fly deploy --config deploy/fly.toml --dockerfile Dockerfile
-```
-
-`deploy/fly.toml` stops the machine when idle and starts it on the next request, so you pay only
-for the hours it is awake plus the Postgres machine and volume. The health check path is
-`/api/health`, which the password gate leaves open on purpose.
-
-## What the app needs from the platform
-
-- `DATABASE_URL`, `YVY_BIND=0.0.0.0:8080`, `YVY_WEB_DIR=/srv/web`, `STOCKFISH_PATH=/usr/games/stockfish`
-  (the image sets the last three), `YVY_CONTACT`, and ideally `YVY_PASSWORD`.
-- Migrations run at startup, so a fresh database is fine.
-- `yvy-server health` inside the container exits 0 when the server answers; the Dockerfile and
-  the Compose files use it as the health check.
-- One CPU is enough. Two concurrent games share the single Stockfish process and simply wait
-  for each other.
-
-## Sources for the prices
-
-- [Hetzner cost-optimized plans](https://www.bitdoze.com/hetzner-cloud-cost-optimized-plans), [Hetzner 2026 price increase](https://findstack.com/resources/hetzner-price-increase-2026), [Hetzner availability notes](https://www.vincentschmalbach.com/hetzner-cheap-cloud-unavailable-price-increases/)
-- [Fly.io pricing](https://fly.io/pricing.md), [Fly.io real costs 2026](https://servercompass.app/blog/flyio-pricing-breakdown-vs-vps)
-- [Oracle free tier changes 2026](https://terminalbytes.com/oracle-cloud-free-tier-changes-2026), [Oracle free tier breakdown](https://fullmetalbrackets.com/blog/oci-free-tier-breakdown)
-- [Railway pricing explained](https://livemy.app/blog/railway-pricing), [DigitalOcean pricing 2026](https://diyai.io/ai-tools/hosting/digitalocean-pricing/)
+- **Data is per browser and per site.** Each visitor's imports and games live in their own
+  browser's IndexedDB, so there is nothing shared to protect and no accounts are needed.
+  Moving to another device or domain means using Save backup and Restore backup on the player
+  page.
+- **chess.com rate limits.** Imports fetch one month at a time and back off when chess.com
+  throttles. A very large account can take a few minutes the first time; later re-syncs only
+  fetch the current month.
+- **Stockfish licensing.** The engine files are GPLv3 and ship unmodified with their license and
+  source links in `engine/README.md` and `engine/COPYING.txt`.

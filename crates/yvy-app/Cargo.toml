@@ -1,0 +1,15 @@
+[package]
+name = "yvy-app"
+description = "You v You Chess application logic: in-memory index, chess.com import, sessions, steering"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+yvy-core = { path = "../yvy-core" }
+shakmaty.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+postcard = { version = "1", default-features = false, features = ["alloc"] }

@@ -1,21 +1,18 @@
-# You v You Chess: developer commands. `make` alone runs the dev loop.
+# You v You Chess: developer commands. `make` alone runs the dev server in the foreground.
 SHELL := /bin/bash
-.PHONY: default db dev server web launch stop status test test-rust test-web build up down import lookup
+.PHONY: default dev wasm launch stop status test test-rust test-web build preview
 
 default: dev
 
-## Start Postgres in Docker and wait until it is healthy (needs Docker Desktop running).
-db:
-	@docker info >/dev/null 2>&1 || { echo "Docker daemon is not running. Start Docker Desktop first."; exit 1; }
-	docker compose up -d db --wait
+## Build the Rust backend to WebAssembly, then run the Bun dev server on :3000 (foreground).
+dev: wasm
+	cd web && bun install --silent && bun run dev
 
-## Dev loop: Postgres in Docker, Rust server on :8080, Bun dev server with HMR on :3000.
-dev: db
-	@trap 'kill 0' EXIT; \
-	(cd web && bun install --silent && bun run dev) & \
-	cargo run -p yvy-server -- serve
+## Rust -> web/src/wasm (needs the wasm32 target and wasm-bindgen-cli 0.2.129).
+wasm:
+	scripts/build-wasm.sh
 
-## Same stack as `make dev`, but detached: pids and logs in .run/. Also available as the /launch skill.
+## Same as `make dev`, but detached, with pids and logs in .run/. Also the /launch skill.
 launch:
 	scripts/launch.sh start
 
@@ -25,41 +22,19 @@ stop:
 status:
 	scripts/launch.sh status
 
-## Only the Rust server (for use with `make web` in another terminal).
-server: db
-	cargo run -p yvy-server -- serve
-
-## Only the Bun dev server.
-web:
-	cd web && bun install --silent && bun run dev
-
-## All tests. Rust integration tests need the Compose Postgres.
-test: db test-rust test-web
+## All tests: Rust unit and scenario tests, then the web tests against the real wasm module.
+test: test-rust test-web
 
 test-rust:
-	@set -a; [ -f .env ] && . ./.env; set +a; \
-	export DATABASE_URL="$${DATABASE_URL:-postgres://yvy:yvy@localhost:5432/yvy}"; \
 	cargo test --workspace
 
-test-web:
-	cd web && bun install --silent && bun test
+test-web: wasm
+	cd web && bun install --silent && bun run typecheck && bun test
 
-## Production build on the host: web bundle plus release binary.
+## The static site in web/dist, ready for GitHub Pages.
 build:
 	cd web && bun install --frozen-lockfile && bun run build
-	cargo build --release -p yvy-server
 
-## Everything in Docker (Postgres + app image with Stockfish) on :8080.
-up:
-	docker compose --profile full up --build
-
-down:
-	docker compose --profile full down
-
-## make import USER=someone [ARGS="--months 3"]
-import: db
-	cargo run -p yvy-server -- import $(USER) $(ARGS)
-
-## make lookup USER=someone FEN="rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
-lookup: db
-	cargo run -p yvy-server -- lookup $(USER) "$(FEN)"
+## Production build served under /yvy-chess/ on :4173, like GitHub Pages.
+preview:
+	scripts/launch.sh preview
